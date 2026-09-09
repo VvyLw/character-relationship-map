@@ -114,7 +114,6 @@
     pointer-events:none; user-select:none;
   }
   .char-node .char-name:empty{ display:none; }
-  #world.names-hidden .char-name{ display:none; }
 
   /* ---------- Character inspector (name + color) ---------- */
   #charInspector{
@@ -187,23 +186,6 @@
     width:22px; height:22px; border-radius:50%; cursor:pointer;
     border:2px solid rgba(255,255,255,.15); flex:none;
   }
-
-  /* ---------- Name-visibility toggle ---------- */
-  .toggle-switch{
-    display:flex; align-items:center; gap:7px; cursor:pointer;
-    font-size:12.5px; color:var(--ink-dim); user-select:none;
-  }
-  .toggle-switch input{ display:none; }
-  .toggle-switch .track{
-    width:34px; height:19px; border-radius:20px; background:var(--surface-2);
-    border:1px solid rgba(255,255,255,.16); position:relative; flex:none; transition:background .15s;
-  }
-  .toggle-switch .track::after{
-    content:''; position:absolute; width:13px; height:13px; border-radius:50%;
-    background:var(--ink-dim); top:2px; left:2px; transition:transform .15s, background .15s;
-  }
-  .toggle-switch input:checked + .track{ background:var(--thread); border-color:var(--thread); }
-  .toggle-switch input:checked + .track::after{ transform:translateX(15px); background:#241505; }
 
   /* screen-space labels */
   .arrow-label{
@@ -325,16 +307,9 @@
     <div id="brand">
       <span class="mark">キャラクター相関図作成ツール</span>
     </div>
-    <div style="display:flex; align-items:center; gap:14px;">
-      <label class="toggle-switch" title="キャラクター名を表示">
-        <input type="checkbox" id="toggleNames" checked>
-        <span class="track"></span>
-        <span>名前</span>
-      </label>
-      <div style="display:flex; gap:8px;">
-        <button class="btn ghost" id="clearAllBtn" title="すべて削除">全消去</button>
-        <button class="btn primary" id="exportBtn">PNGとして保存</button>
-      </div>
+    <div style="display:flex; gap:8px;">
+      <button class="btn ghost" id="clearAllBtn" title="すべて削除">全消去</button>
+      <button class="btn primary" id="exportBtn">PNGとして保存</button>
     </div>
   </div>
 
@@ -472,7 +447,6 @@
   var relationships = [];   // {id, source, target, label} — arrow color is derived from the source character's color, not stored here
   var view = { x: 0, y: 0, scale: 1 };
   var selectedCharId = null;
-  var chartSettings = { showCharacterNames: true };
 
   var STORAGE_KEY = "musubi_relationship_map_v1";
   var CHAR_SIZE = 104;      // display diameter (px, world units)
@@ -616,7 +590,7 @@
 
   function saveState(){
     try{
-      var data = { characters: characters, relationships: relationships, view: view, chartSettings: chartSettings };
+      var data = { characters: characters, relationships: relationships, view: view };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     }catch(e){
       toast("保存に失敗しました（ブラウザのストレージ容量が不足している可能性があります）");
@@ -662,9 +636,6 @@
         // any left over from older saved data.
         relationships.forEach(function(r){ if('color' in r) delete r.color; });
       }
-      if(data.chartSettings && typeof data.chartSettings.showCharacterNames === 'boolean'){
-        chartSettings.showCharacterNames = data.chartSettings.showCharacterNames;
-      }
       if(charsBackfilled) saveState();
       if(data.view && typeof data.view.scale === 'number'){ view = data.view; }
     }catch(e){
@@ -692,7 +663,6 @@
   /* ============ Rendering ============ */
   function render(){
     emptyState.style.display = characters.length ? 'none' : 'flex';
-    world.classList.toggle('names-hidden', !chartSettings.showCharacterNames);
     renderCharacters();
     renderArrowsAndLabels();
     applyViewTransform();
@@ -815,14 +785,15 @@
       var labelExtra = sign * (RELATIONSHIP_LINE_OFFSET + LABEL_EXTRA_OFFSET);
       var labelX = (startX+endX)/2 + cperpX*(labelExtra-offset);
       var labelY = (startY+endY)/2 + cperpY*(labelExtra-offset);
-      return { startX:startX, startY:startY, endX:endX, endY:endY, labelX:labelX, labelY:labelY };
+      return { startX:startX, startY:startY, endX:endX, endY:endY, labelX:labelX, labelY:labelY, nx:cperpX*sign, ny:cperpY*sign };
     }
 
     // No reverse relationship for this pair — a plain straight line through
     // the two character centers, trimmed to each circle's edge.
     var startX = sourceChar.x + ux*sr, startY = sourceChar.y + uy*sr;
     var endX = targetChar.x - ux*tr, endY = targetChar.y - uy*tr;
-    return { startX:startX, startY:startY, endX:endX, endY:endY, labelX:(startX+endX)/2, labelY:(startY+endY)/2 };
+    var nx = -uy, ny = ux; // unit normal of this segment's own direction
+    return { startX:startX, startY:startY, endX:endX, endY:endY, labelX:(startX+endX)/2, labelY:(startY+endY)/2, nx:nx, ny:ny };
   }
 
   var hoveredRelId = null;
@@ -923,7 +894,13 @@
       var sx = Math.min(Math.max(sp.x, half+margin), vpRect.width-half-margin);
       var sy = Math.min(Math.max(sp.y, halfH+margin), vpRect.height-halfH-margin);
 
-      // best-effort collision avoidance against labels already placed this pass
+      // best-effort collision avoidance against labels already placed this pass —
+      // when a label overlaps another, push it further along *its own arrow's*
+      // normal direction (never a fixed screen-space direction like "down"),
+      // so the label always stays associated with the side its own arrow is on
+      var pushX = (g.nx || 0), pushY = (g.ny || 1);
+      var pushLen = Math.hypot(pushX, pushY) || 1;
+      pushX /= pushLen; pushY /= pushLen;
       var attempts = 0;
       while(attempts < 6){
         var myRect = { l: sx-half, r: sx+half, t: sy-halfH, b: sy+halfH };
@@ -935,8 +912,9 @@
           }
         }
         if(!collided) break;
-        sy = collided.b + halfH + 6; // push below the label it collided with
-        sy = Math.min(Math.max(sy, halfH+margin), vpRect.height-halfH-margin);
+        var step = (Math.max(half, halfH)*2 + 6) * (attempts+1);
+        sx = Math.min(Math.max(sp.x + pushX*step, half+margin), vpRect.width-half-margin);
+        sy = Math.min(Math.max(sp.y + pushY*step, halfH+margin), vpRect.height-halfH-margin);
         attempts++;
       }
 
@@ -1945,18 +1923,8 @@
     inp.addEventListener('keydown', function(e){ if(e.key==='Enter') commitRgb(); });
   });
 
-  /* ============ Name-visibility toggle ============ */
-  var toggleNamesInput = document.getElementById('toggleNames');
-  toggleNamesInput.checked = chartSettings.showCharacterNames;
-  toggleNamesInput.addEventListener('change', function(){
-    chartSettings.showCharacterNames = toggleNamesInput.checked;
-    render();
-    saveDebounced();
-  });
-
   /* ============ Init ============ */
   loadState();
-  toggleNamesInput.checked = chartSettings.showCharacterNames;
   render();
 })();
 </script>
