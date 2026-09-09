@@ -737,9 +737,6 @@
         el = document.createElement('div');
         el.className = 'char-node';
         el.dataset.id = c.id;
-        el.style.width = c.size+'px';
-        el.style.height = c.size+'px';
-        el.style.backgroundImage = "url('"+c.image+"')";
         var handle = document.createElement('div');
         handle.className = 'handle';
         handle.title = 'ドラッグして矢印を作成';
@@ -757,6 +754,13 @@
       } else {
         delete existing[c.id];
       }
+      // Always refresh these from the current Character data — not just at
+      // creation — so changes (e.g. replacing the image) show up on the
+      // very next render instead of only after the DOM node gets recreated
+      // (which previously only happened on a full page reload).
+      el.style.width = c.size+'px';
+      el.style.height = c.size+'px';
+      el.style.backgroundImage = "url('"+c.image+"')";
       el.style.left = c.x+'px';
       el.style.top = c.y+'px';
       el.classList.toggle('selected', c.id === selectedCharId);
@@ -1778,6 +1782,43 @@
           ctx.restore();
         }
         ctx.restore();
+
+        // Name label — only drawn when the character actually has a name,
+        // exactly mirroring the on-screen rule (no separate show/hide flag
+        // to keep in sync). Position and the "shrink long names to fit on
+        // one line" rule reuse the very same NAME_* constants as the
+        // on-screen fitCharName(), so the exported image always matches
+        // what's visible on the canvas.
+        if(c.name){
+          var fontFamily = '-apple-system, "Segoe UI", "Hiragino Kaku Gothic ProN", sans-serif';
+          var fontSize = NAME_BASE_SIZE;
+          ctx.font = fontSize + 'px ' + fontFamily;
+          var padX = 8;
+          var textW = ctx.measureText(c.name).width;
+          if(textW + padX*2 > NAME_MAX_WIDTH){
+            fontSize = Math.max(NAME_MIN_SIZE, NAME_BASE_SIZE * (NAME_MAX_WIDTH - padX*2) / textW);
+            ctx.font = fontSize + 'px ' + fontFamily;
+            textW = ctx.measureText(c.name).width;
+          }
+          var boxW = textW + padX*2;
+          var boxH = fontSize + 10;
+          var boxR = boxH/2;
+          var nameCenterY = p[1] + c.size/2 + 6 + boxH/2; // 6px matches the on-screen margin-top
+          var bx = p[0]-boxW/2, by = nameCenterY-boxH/2;
+          ctx.beginPath();
+          ctx.moveTo(bx+boxR, by);
+          ctx.arcTo(bx+boxW, by, bx+boxW, by+boxH, boxR);
+          ctx.arcTo(bx+boxW, by+boxH, bx, by+boxH, boxR);
+          ctx.arcTo(bx, by+boxH, bx, by, boxR);
+          ctx.arcTo(bx, by, bx+boxW, by, boxR);
+          ctx.closePath();
+          ctx.fillStyle = 'rgba(20,21,31,0.72)';
+          ctx.fill();
+          ctx.fillStyle = '#F5F1E8';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(c.name, p[0], nameCenterY+1);
+        }
       });
 
       var now = new Date();
