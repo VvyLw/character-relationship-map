@@ -1,11 +1,9 @@
 # キャラクター相関図作成ツール
 
+[![GitHub Pages](https://img.shields.io/static/v1?label=GitHub+Pages&message=+&color=brightgreen&logo=github)](https://vvylw.github.io/character-relationship-map)
+[![Deploy to GitHub Pages](https://github.com/VvyLw/character-relationship-map/actions/workflows/deploy-to-pages.yml/badge.svg)](https://github.com/VvyLw/character-relationship-map/actions/workflows/deploy-to-pages.yml)
+
 キャラクター画像をアップロードし、円形に切り抜いてノードを作り、矢印（Relationship）でつないでキャラクター同士の相関図を作成できるWebアプリです。単一のHTMLファイルのみで動作し、サーバーやビルド環境は不要です。
-
-## 使い方
-
-1. `character-relationship-map.html` をダブルクリックしてブラウザで開く（またはブラウザにドラッグ＆ドロップ）。
-2. そのまま使えます。インストールや通信は不要です（保存はブラウザのLocalStorageに行われます）。
 
 対応ブラウザ：最新の Chrome / Edge / Safari / Firefox（デスクトップ・モバイル両対応）。
 
