@@ -1,0 +1,25 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - .github/workflows/**
+      - src/**
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout masterthesis repo
+        uses: actions/checkout@v4
+
+      - name: Push to vvylw.github.io
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          external_repository: vvylw/vvylw.github.io
+          publish_branch: master
+          publish_dir: ./src
+          destination_dir: character-relationship-map
+          personal_token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
