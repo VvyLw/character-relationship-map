@@ -107,10 +107,10 @@
   .char-node:hover .del{ opacity:1; transform:scale(1); }
   .char-node .char-name{
     position:absolute; left:50%; top:100%; transform:translateX(-50%);
-    margin-top:6px; max-width:130px; padding:1px 8px; border-radius:8px;
+    margin-top:6px; max-width:140px; padding:1px 8px; border-radius:8px;
     background:rgba(20,21,31,.72); color:var(--ink);
     font-size:12.5px; line-height:1.4; text-align:center;
-    white-space:normal; overflow-wrap:break-word;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
     pointer-events:none; user-select:none;
   }
   .char-node .char-name:empty{ display:none; }
@@ -449,6 +449,13 @@
   var selectedCharId = null;
 
   var STORAGE_KEY = "musubi_relationship_map_v1";
+
+  // Used only when a character's color is genuinely missing (e.g. a
+  // relationship pointing at a character that no longer exists). Deliberately
+  // low-saturation and gray — nothing our color generator ever produces — so
+  // if this ever shows up on screen, it's immediately recognizable as "no
+  // color was found" rather than quietly looking like a real, assigned color.
+  var FALLBACK_COLOR = '#8891A6';
   var CHAR_SIZE = 104;      // display diameter (px, world units)
   var OUTPUT_RES = 320;     // raster resolution of cropped character image
 
@@ -556,13 +563,18 @@
       .map(function(c){ return c.color ? hexToHue(c.color) : null; })
       .filter(function(h){ return h !== null; });
     var bestHue = Math.random()*360, bestScore = -1;
-    for(var i=0;i<24;i++){
+    for(var i=0;i<40;i++){
       var candidate = Math.random()*360;
       var minDist = existingHues.length
         ? Math.min.apply(null, existingHues.map(function(h){ return hueDistance(h,candidate); }))
         : 180;
       if(minDist > bestScore){ bestScore = minDist; bestHue = candidate; }
-      if(minDist > 40) break; // good enough separation, stop early
+      // 90°+ apart reads as a clearly different color even within our
+      // fairly narrow saturation/lightness band (e.g. blue vs. green vs.
+      // orange, not two shades of teal) — the old 40° threshold let a
+      // second character land close enough to the first to look "the same
+      // blue-green" at a glance, especially with just two characters.
+      if(minDist > 90) break;
     }
     var saturation = 62 + Math.random()*18;  // 62–80%
     var lightness = 56 + Math.random()*10;   // 56–66%
@@ -661,8 +673,34 @@
   }
 
   /* ============ Rendering ============ */
+
+  // Keeps a character's name label on a single line: rather than wrapping
+  // (which produced awkward mid-word line breaks for longer names), the
+  // font size is shrunk just enough for the text to fit the label's max
+  // width. Short names are untouched (stay at the normal size); very long
+  // names still fall back to CSS text-overflow:ellipsis as a last resort
+  // once NAME_MIN_SIZE is reached.
+  var NAME_MAX_WIDTH = 132;   // a touch under the CSS max-width, for breathing room
+  var NAME_BASE_SIZE = 12.5;  // matches the CSS default font-size
+  var NAME_MIN_SIZE = 8.5;    // never shrink past this — keeps text readable
+  function fitCharName(nameNode){
+    nameNode.style.fontSize = ''; // reset to the CSS default before measuring
+    var text = nameNode.textContent;
+    if(!text) return;
+    var w = nameNode.scrollWidth; // full (unclipped) width of the text at the default size
+    if(w > NAME_MAX_WIDTH){
+      var shrunk = NAME_BASE_SIZE * (NAME_MAX_WIDTH / w);
+      nameNode.style.fontSize = Math.max(NAME_MIN_SIZE, shrunk).toFixed(1) + 'px';
+    }
+  }
+
   function render(){
     emptyState.style.display = characters.length ? 'none' : 'flex';
+    var healed = false;
+    characters.forEach(function(c){
+      if(!c.color){ c.color = generateCharacterColor(); healed = true; }
+    });
+    if(healed) saveDebounced();
     renderCharacters();
     renderArrowsAndLabels();
     applyViewTransform();
@@ -704,12 +742,15 @@
       el.style.left = c.x+'px';
       el.style.top = c.y+'px';
       el.classList.toggle('selected', c.id === selectedCharId);
-      var color = c.color || '#D9A441';
+      var color = c.color || FALLBACK_COLOR;
       el.style.boxShadow = c.id === selectedCharId
         ? '0 0 0 3px '+color+', 0 0 0 6px var(--thread), 0 4px 14px rgba(0,0,0,.45)'
         : '0 0 0 3px '+color+', 0 4px 14px rgba(0,0,0,.45)';
       var nameNode = el.querySelector('.char-name');
-      if(nameNode) nameNode.textContent = c.name || '';
+      if(nameNode){
+        nameNode.textContent = c.name || '';
+        fitCharName(nameNode);
+      }
     });
     Object.keys(existing).forEach(function(id){ existing[id].remove(); });
   }
@@ -804,7 +845,7 @@
   // updates every arrow that starts from it.
   function relationshipColor(rel){
     var sourceChar = characters.find(function(c){ return c.id === rel.source; });
-    return (sourceChar && sourceChar.color) || '#D9A441';
+    return (sourceChar && sourceChar.color) || FALLBACK_COLOR;
   }
 
   function selectRelationship(id){
@@ -895,14 +936,20 @@
       var sy = Math.min(Math.max(sp.y, halfH+margin), vpRect.height-halfH-margin);
 
       // best-effort collision avoidance against labels already placed this pass —
-      // when a label overlaps another, push it further along *its own arrow's*
-      // normal direction (never a fixed screen-space direction like "down"),
-      // so the label always stays associated with the side its own arrow is on
+      // when a label overlaps another, nudge it a little further along *its own
+      // arrow's* normal direction (never a fixed screen-space direction like
+      // "down"). The step is small and fixed (not derived from the label's own
+      // pixel size or multiplied by the attempt count) — staying visibly
+      // associated with its own arrow always takes priority over fully
+      // resolving every overlap, so a handful of small nudges is preferred
+      // over one nudge that could fling the label far away.
       var pushX = (g.nx || 0), pushY = (g.ny || 1);
       var pushLen = Math.hypot(pushX, pushY) || 1;
       pushX /= pushLen; pushY /= pushLen;
+      var NUDGE_STEP = 10;
+      var MAX_NUDGES = 3; // caps total drift from the true anchor at 30px
       var attempts = 0;
-      while(attempts < 6){
+      while(attempts < MAX_NUDGES){
         var myRect = { l: sx-half, r: sx+half, t: sy-halfH, b: sy+halfH };
         var collided = null;
         for(var i=0;i<placedLabelRects.length;i++){
@@ -912,10 +959,10 @@
           }
         }
         if(!collided) break;
-        var step = (Math.max(half, halfH)*2 + 6) * (attempts+1);
+        attempts++;
+        var step = NUDGE_STEP * attempts;
         sx = Math.min(Math.max(sp.x + pushX*step, half+margin), vpRect.width-half-margin);
         sy = Math.min(Math.max(sp.y + pushY*step, halfH+margin), vpRect.height-halfH-margin);
-        attempts++;
       }
 
       placedLabelRects.push({ l: sx-half, r: sx+half, t: sy-halfH, b: sy+halfH });
@@ -1610,7 +1657,7 @@
         ctx.save();
         ctx.beginPath();
         ctx.arc(p[0], p[1], c.size/2, 0, Math.PI*2);
-        ctx.strokeStyle = '#F5F1E8';
+        ctx.strokeStyle = c.color || FALLBACK_COLOR;
         ctx.lineWidth = 2.5;
         ctx.fillStyle = '#0d0e15';
         ctx.fill();
@@ -1660,7 +1707,7 @@
     }
     charInspector.classList.remove('hidden');
     if(document.activeElement !== charNameInput){ charNameInput.value = c.name || ''; }
-    var hex = c.color || '#D9A441';
+    var hex = c.color || FALLBACK_COLOR;
     colorPreviewSwatch.style.background = hex;
     colorPreviewHex.textContent = hex.toUpperCase();
   }
@@ -1671,7 +1718,7 @@
     if(!c) return;
     c.name = charNameInput.value;
     var el = world.querySelector('.char-node[data-id="'+c.id+'"] .char-name');
-    if(el) el.textContent = c.name;
+    if(el){ el.textContent = c.name; fitCharName(el); }
     saveDebounced();
   });
 
@@ -1778,7 +1825,7 @@
     if(!c) return;
     cancelPendingSave();
     buildPickerPresets();
-    var hsv = hexToHsv(c.color || '#D9A441');
+    var hsv = hexToHsv(c.color || FALLBACK_COLOR);
     colorPickerState = { charId: charId, originalColor: c.color, h: hsv.h, s: hsv.s, v: hsv.v };
     colorPickerOverlay.classList.remove('hidden');
     refreshPickerUI(true);
