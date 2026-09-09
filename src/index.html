@@ -1649,7 +1649,8 @@
       });
 
       var now = new Date();
-      var fname = 'relationships_' + now.getFullYear() + pad2(now.getMonth()+1) + pad2(now.getDate()) + '.png';
+      var fname = 'relationships_' + now.getFullYear() + pad2(now.getMonth()+1) + pad2(now.getDate())
+        + pad2(now.getHours()) + pad2(now.getMinutes()) + pad2(now.getSeconds()) + '.png';
       canvas.toBlob(function(blob){
         if(!blob){ toast("PNG生成に失敗しました"); return; }
         var url = URL.createObjectURL(blob);

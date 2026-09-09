@@ -1,10 +1,13 @@
 # キャラクター相関図作成ツール
 
-[![GitHub Pages](https://img.shields.io/static/v1?label=GitHub+Pages&message=+&color=brightgreen&logo=github)](https://vvylw.github.io/character-relationship-map)
-[![Deploy to GitHub Pages](https://github.com/VvyLw/character-relationship-map/actions/workflows/deploy-to-pages.yml/badge.svg)](https://github.com/VvyLw/character-relationship-map/actions/workflows/deploy-to-pages.yml)
-
-
 キャラクター画像をアップロードし、円形に切り抜いてノードを作り、矢印（Relationship）でつないでキャラクター同士の相関図を作成できるWebアプリです。単一のHTMLファイルのみで動作し、サーバーやビルド環境は不要です。
+
+## 使い方
+
+1. `character-relationship-map.html` をダブルクリックしてブラウザで開く（またはブラウザにドラッグ＆ドロップ）。
+2. そのまま使えます。インストールや通信は不要です（保存はブラウザのLocalStorageに行われます）。
+
+対応ブラウザ：最新の Chrome / Edge / Safari / Firefox（デスクトップ・モバイル両対応）。
 
 ## 主な機能
 
@@ -37,7 +40,7 @@
 ### 保存・書き出し
 - キャラクター（画像・位置・サイズ・色・名前）、Relationship（source/target/label）、表示設定（名前表示ON/OFF）、キャンバスの表示位置・ズームをブラウザのLocalStorageに自動保存し、リロード後も復元される。
 - ヘッダーの「全消去」ボタンで、確認モーダルを経てすべてのデータを削除できる（誤操作防止のため、確認せずに即消去されることはない）。
-- 「PNGとして保存」ボタンで、相関図全体（表示中の範囲だけでなく全キャラクター・全矢印・全ラベルを含む）を `relationships_YYYYMMDD.png` という名前で画像として書き出せる。
+- 「PNGとして保存」ボタンで、相関図全体（表示中の範囲だけでなく全キャラクター・全矢印・全ラベルを含む）を `relationships_yyyyMMddHHmmss.png`（例：`relationships_20260909153045.png`）という名前で画像として書き出せる。日時はローカル時刻を基準とする。
 
 ## データ構造（概要）
 
