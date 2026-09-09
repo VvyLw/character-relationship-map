@@ -132,6 +132,16 @@
   }
   #charInspector input[type=text]:focus{ outline:2px solid var(--thread-soft); border-color:var(--thread); }
   #charInspector .insp-actions{ display:flex; justify-content:flex-end; gap:8px; }
+  .insp-image-row{ display:flex; align-items:center; gap:10px; }
+  .char-image-preview{
+    width:44px; height:44px; border-radius:50%; flex:none;
+    background-size:cover; background-position:center;
+    border:2px solid rgba(255,255,255,.2);
+    transition:border-color .12s, box-shadow .12s;
+  }
+  .char-image-preview.dragover{
+    border-color:var(--thread); box-shadow:0 0 0 3px var(--thread-soft);
+  }
 
   .color-preview-btn{
     display:flex; align-items:center; gap:10px; width:100%;
@@ -332,6 +342,13 @@
 
     <div id="charInspector" class="hidden">
       <div class="insp-row">
+        <label class="small">キャラクター画像</label>
+        <div class="insp-image-row">
+          <div id="charImagePreview" class="char-image-preview" title="ここに画像をドラッグ＆ドロップして差し替え"></div>
+          <button type="button" id="charImageChangeBtn" class="btn ghost">画像を変更</button>
+        </div>
+      </div>
+      <div class="insp-row">
         <label class="small">キャラクター名</label>
         <input type="text" id="charNameInput" placeholder="名前を入力" maxlength="20">
       </div>
@@ -358,6 +375,7 @@
 </div>
 
 <input type="file" id="fileInput" accept="image/png,image/jpeg,image/webp" multiple>
+<input type="file" id="replaceFileInput" accept="image/png,image/jpeg,image/webp">
 
 <!-- Crop overlay -->
 <div class="overlay hidden" id="cropOverlay">
@@ -767,7 +785,7 @@
   // exist. Kept as a single named constant (not scattered magic numbers) so
   // it's trivial to retune — "just enough to see they're not overlapping",
   // not a wide, obviously-bent gap.
-  var RELATIONSHIP_LINE_OFFSET = 8;
+  var RELATIONSHIP_LINE_OFFSET = 10;
 
   // Extra perpendicular push applied to a label ON TOP OF its own arrow's
   // line offset, in that exact same direction/sign. Two reverse arrows sit
@@ -779,6 +797,16 @@
   // two never collide in the first place, so there is nothing for that
   // order-dependent pass to get wrong.
   var LABEL_EXTRA_OFFSET = 16;
+
+  // Label chips are much wider than they are tall. For a roughly horizontal
+  // arrow the offset direction is vertical, so LABEL_EXTRA_OFFSET alone is
+  // already enough clearance (chip height is small). But for a roughly
+  // vertical arrow the offset direction is horizontal — the same small
+  // offset just nudges two wide chips a few pixels sideways, leaving them
+  // sitting almost side-by-side and hard to tell apart. This adds extra
+  // push scaled by how horizontal the offset direction is (0 for a
+  // horizontal arrow, up to this full amount for a vertical one).
+  var LABEL_WIDTH_EXTRA_MAX = 34;
 
   // Arrows are drawn as straight lines. When a relationship's reverse
   // counterpart also exists, the whole line — both endpoints — is shifted
@@ -823,7 +851,11 @@
       // along the identical (cperpX,cperpY) * sign used above — never a
       // separately-derived direction — so it is mathematically impossible
       // for this label to end up matching the *other* relationship's side.
-      var labelExtra = sign * (RELATIONSHIP_LINE_OFFSET + LABEL_EXTRA_OFFSET);
+      // The push grows with |cperpX| (how horizontal that direction is), so
+      // near-vertical arrows — where labels would otherwise sit almost
+      // side-by-side — get extra room to clear each other's width.
+      var widthExtra = LABEL_WIDTH_EXTRA_MAX * Math.abs(cperpX);
+      var labelExtra = sign * (RELATIONSHIP_LINE_OFFSET + LABEL_EXTRA_OFFSET + widthExtra);
       var labelX = (startX+endX)/2 + cperpX*(labelExtra-offset);
       var labelY = (startY+endY)/2 + cperpY*(labelExtra-offset);
       return { startX:startX, startY:startY, endX:endX, endY:endY, labelX:labelX, labelY:labelY, nx:cperpX*sign, ny:cperpY*sign };
@@ -1293,6 +1325,14 @@
   var cropOverlay = document.getElementById('cropOverlay');
   var cropProgressEl = document.getElementById('cropProgress');
 
+  // The same circular-crop UI is reused both for adding brand-new characters
+  // and for replacing an existing character's image. cropMode decides what
+  // happens when the user presses "決定": 'create' pushes a new Character,
+  // 'replace' overwrites only image on the existing one (id/x/y/size/
+  // color/name and every Relationship stay untouched).
+  var cropMode = 'create'; // 'create' | 'replace'
+  var replaceTargetCharId = null;
+
   var circle = { cx:0, cy:0, r:0 };
   var displayScale = 1;
   var naturalW=0, naturalH=0;
@@ -1309,6 +1349,8 @@
       valid.push(f);
     });
     if(!valid.length) return;
+    cropMode = 'create';
+    replaceTargetCharId = null;
     uploadQueue = uploadQueue.concat(valid);
     if(!cropInProgress){ currentUploadIndex = 0; startNextCrop(); }
   }
@@ -1349,7 +1391,9 @@
 
   function openCropUI(img){
     cropOverlay.classList.remove('hidden');
-    cropProgressEl.textContent = (currentUploadIndex+1) + " / " + totalInBatch;
+    cropProgressEl.textContent = cropMode === 'replace'
+      ? '画像を変更'
+      : (currentUploadIndex+1) + " / " + totalInBatch;
     naturalW = img.naturalWidth; naturalH = img.naturalHeight;
     var maxDim = Math.min(460, window.innerWidth*0.82, window.innerHeight*0.55);
     displayScale = Math.min(maxDim/naturalW, maxDim/naturalH, 1);
@@ -1450,7 +1494,11 @@
   window.addEventListener('mouseup', function(){ cropDragMode = null; });
   window.addEventListener('touchend', function(){ cropDragMode = null; });
 
-  document.getElementById('cropDecideBtn').addEventListener('click', function(){
+  // Renders the current circular selection to a fixed-resolution, alpha-
+  // masked PNG dataURL. Shared by both create mode (new Character.image)
+  // and replace mode (overwriting an existing Character.image) so the two
+  // flows can never drift apart in how cropping actually works.
+  function generateCroppedDataUrl(){
     try{
       var origCx = circle.cx/displayScale, origCy = circle.cy/displayScale, origR = circle.r/displayScale;
       var out = document.createElement('canvas');
@@ -1463,16 +1511,49 @@
       octx.beginPath();
       octx.arc(OUTPUT_RES/2, OUTPUT_RES/2, OUTPUT_RES/2, 0, Math.PI*2);
       octx.fill();
-      var dataUrl = out.toDataURL('image/png');
-      addCharacter(dataUrl);
+      return out.toDataURL('image/png');
     }catch(err){
       toast("画像の切り抜きに失敗しました");
+      return null;
     }
+  }
+
+  document.getElementById('cropDecideBtn').addEventListener('click', function(){
+    var dataUrl = generateCroppedDataUrl();
+
+    if(cropMode === 'replace'){
+      if(dataUrl && replaceTargetCharId){
+        var c = characters.find(function(x){ return x.id===replaceTargetCharId; });
+        if(c){
+          // Only the image changes — id/x/y/size/color/name, and every
+          // Relationship referencing this character, are left completely
+          // untouched.
+          c.image = dataUrl;
+          render();
+          saveState(); // persist immediately; this is an explicit confirm action
+          toast("画像を変更しました");
+        }
+      }
+      cropMode = 'create';
+      replaceTargetCharId = null;
+      cropOverlay.classList.add('hidden');
+      return;
+    }
+
+    if(dataUrl) addCharacter(dataUrl);
     currentUploadIndex++;
     startNextCrop();
   });
 
   document.getElementById('cropCancelBtn').addEventListener('click', function(){
+    if(cropMode === 'replace'){
+      // Leave the existing character's image (and everything else) exactly
+      // as it was — nothing to undo since nothing was written yet.
+      cropMode = 'create';
+      replaceTargetCharId = null;
+      cropOverlay.classList.add('hidden');
+      return;
+    }
     currentUploadIndex++;
     startNextCrop();
   });
@@ -1493,6 +1574,32 @@
     characters.push({ id: uid(), image: dataUrl, x: pos.x, y: pos.y, size: CHAR_SIZE, color: generateCharacterColor(), name: '' });
     render();
     saveDebounced();
+  }
+
+  // Replaces only Character.image for an existing character, reusing the
+  // exact same circular-crop UI as new-character creation (see cropMode).
+  function handleReplaceFile(charId, file){
+    if(!/^image\/(png|jpeg|jpg|webp)$/.test(file.type)){
+      toast("非対応の形式です: " + file.name);
+      return;
+    }
+    var reader = new FileReader();
+    reader.onerror = function(){
+      toast("画像の読み込みに失敗しました: " + file.name);
+    };
+    reader.onload = function(ev){
+      var img = new Image();
+      img.onerror = function(){
+        toast("画像が壊れているため読み込めません: " + file.name);
+      };
+      img.onload = function(){
+        cropMode = 'replace';
+        replaceTargetCharId = charId;
+        openCropUI(img);
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
   }
 
   /* ============ Drag & drop / file input ============ */
@@ -1694,6 +1801,8 @@
   var charNameInput = document.getElementById('charNameInput');
   var colorPreviewSwatch = document.getElementById('colorPreviewSwatch');
   var colorPreviewHex = document.getElementById('colorPreviewHex');
+  var charImagePreview = document.getElementById('charImagePreview');
+  var replaceFileInput = document.getElementById('replaceFileInput');
 
   function syncCharInspector(){
     if(!selectedCharId){
@@ -1710,6 +1819,7 @@
     var hex = c.color || FALLBACK_COLOR;
     colorPreviewSwatch.style.background = hex;
     colorPreviewHex.textContent = hex.toUpperCase();
+    charImagePreview.style.backgroundImage = c.image ? "url('"+c.image+"')" : 'none';
   }
 
   charNameInput.addEventListener('input', function(){
@@ -1728,6 +1838,47 @@
   });
   document.getElementById('charInspectorDelete').addEventListener('click', function(){
     if(selectedCharId) deleteCharacter(selectedCharId);
+  });
+
+  // -- Image replacement: "画像を変更" button --
+  document.getElementById('charImageChangeBtn').addEventListener('click', function(){
+    if(!selectedCharId) return;
+    replaceFileInput.value = '';
+    replaceFileInput.click();
+  });
+  replaceFileInput.addEventListener('change', function(){
+    if(selectedCharId && replaceFileInput.files && replaceFileInput.files[0]){
+      handleReplaceFile(selectedCharId, replaceFileInput.files[0]);
+    }
+    replaceFileInput.value = '';
+  });
+
+  // -- Image replacement: drag & drop directly onto the preview thumbnail --
+  // stopPropagation on 'drop' keeps this from also triggering the
+  // window-level handler that treats a drop as "add new characters".
+  charImagePreview.addEventListener('dragenter', function(e){
+    e.preventDefault(); e.stopPropagation();
+    charImagePreview.classList.add('dragover');
+  });
+  charImagePreview.addEventListener('dragover', function(e){
+    e.preventDefault(); e.stopPropagation();
+  });
+  charImagePreview.addEventListener('dragleave', function(e){
+    e.stopPropagation();
+    charImagePreview.classList.remove('dragover');
+  });
+  charImagePreview.addEventListener('drop', function(e){
+    e.preventDefault(); e.stopPropagation();
+    charImagePreview.classList.remove('dragover');
+    // This drop is intentionally kept from bubbling to the window-level
+    // handler (so it isn't mistaken for "add new characters"), so clear its
+    // drag-hint state here instead — otherwise the "ここに画像をドロップ"
+    // overlay could stay stuck visible.
+    dragCounter = 0;
+    appEl.classList.remove('dragover');
+    if(selectedCharId && e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]){
+      handleReplaceFile(selectedCharId, e.dataTransfer.files[0]);
+    }
   });
 
   /* ============ Unity / lilToon-style HSV color picker ============ */
